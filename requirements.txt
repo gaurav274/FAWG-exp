@@ -1,0 +1,16 @@
+pandas
+matplotlib
+tqdm
+seaborn
+ipython
+psutil
+requests
+more_itertools
+awscli
+click
+jsonlines
+pybase64
+GitPython
+sklearn
+openpyxl
+xlrd

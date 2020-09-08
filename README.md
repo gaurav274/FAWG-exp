@@ -1,11 +1,13 @@
 ## Enviornment Installation
 - Install Anaconda3
 - For setting up the enviornment run : 
-   ```
-        bash scripts/create_experiment_env_linux.sh srtml-exp
-        conda activate srtml-exp
-        python -c "import srtml; srtml.init()"
-    ```
+   - for instantiating with localstack: `bash scripts/create_experiment_env_linux.sh srtml-exp localstack_init`
+   - for instantiating without localstack:  `bash scripts/create_experiment_env_linux.sh srtml-exp`
+   - Finally
+      ```
+           conda activate srtml-exp
+           python -c "import srtml; srtml.init()"
+       ```
 
 
 ## Model Repository

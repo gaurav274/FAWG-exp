@@ -13,6 +13,7 @@ from srtml_exp.utils import (
     get_dataframe_from_profile,
     get_latency_stats,
     PLANNER_CLS,
+    set_seed,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "get_dataframe_from_profile",
     "get_latency_stats",
     "PLANNER_CLS",
+    "set_seed",
 ]

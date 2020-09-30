@@ -170,3 +170,12 @@ def shutdown():
     ray.shutdown()
     srtml.serve.api.global_state = None
     srtml.modellib.api.global_state = None
+
+
+def set_seed(graph_handle):
+    ppu_handles = graph_handle.ppu_handles
+    for ppu_name in ppu_handles:
+        phandle = ppu_handles[ppu_name]
+        all_replicas = phandle.get_replica_handles()
+        for replica_handle in all_replicas:
+            ray.get(replica_handle.seed.remote())

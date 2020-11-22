@@ -26,6 +26,7 @@ import pandas as pd
 import click
 import json
 
+
 ###################################################################################################
 
 from transformers import BertTokenizer, BertConfig
@@ -39,7 +40,7 @@ class Stage0(torch.nn.Module):
         self.embedding_layer = BertEmbeddings(config)
         self.layers = []
         print(config.num_hidden_layers)
-        for i in range(config.num_hidden_layers // 2):
+        for i in range(config.num_hidden_layers // 4):
             self.layers.append(BertLayer(config))
         self.layers = torch.nn.ModuleList(self.layers)
         self.config = config
@@ -67,7 +68,7 @@ class Stage1(torch.nn.Module):
     def __init__(self, config):
         super(Stage1, self).__init__()
         self.layers = []
-        for i in range(config.num_hidden_layers // 2):
+        for i in range(config.num_hidden_layers // 4):
             self.layers.append(BertLayer(config))
         self.layers = torch.nn.ModuleList(self.layers)
         self.pooling_layer = BertPooler(config)
@@ -146,7 +147,7 @@ class BertPartition:
             input0 = input0.cuda()
             input1 = input1.cuda()
         outputs = self.model(input0, input1)
-        res = [i.cpu().unbind()[0] for i in outputs]
+        res = list(outputs.cpu().unbind())
         # res = [[a, b] for a, b in zip(res[0], res[1])]
         return res
 
@@ -229,6 +230,7 @@ ray_serve_kwargs={
         },
         "start_server": False,
         }
+
 
 
 @click.command()

@@ -3,8 +3,7 @@
         "mu (qps)": 150.0,
         "cv": 0,
         "# requests": 2000,
-        "Latency Constraint (ms)": 90.0,
-        // "Planner": "ImprovedInferline"
+        "Latency Constraint (ms)": 100.0,
         "Planner": "VanillaInferline"
     }
 ]

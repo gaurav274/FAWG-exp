@@ -29,7 +29,7 @@ import click
 @vpu
 @vpu_type(output_type=list)
 class Classifier:
-    image: list
+    text: list
 
 
 dinfo = DATASET_INFORMATION(**IMAGE_DATASET_INFORMATION)
@@ -63,7 +63,7 @@ def main(xls_file, start_cmd, end_cmd):
     for index, row in df.iterrows():
         row_df = {columns[i]: df.loc[index, columns[i]] for i in range(5)}
 
-        with VGraph(name="classifier") as graph:
+        with VGraph(name="bert") as graph:
             classifier = Classifier(
                 feature=IMAGE_CLASSIFICATION_FEATURE,
                 dataset_information=dinfo,

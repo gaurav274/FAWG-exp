@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -35,23 +33,10 @@ func MakeRequest(url string, values map[string]string, ch chan<- string,
 func main() {
 	ch := make(chan string)
 	deadline_ms, err := strconv.ParseFloat(os.Args[1], 64)
-	img_path := os.Args[2]
 	arrival_curve := os.Args[3:]
 
-	imgFile, err := os.Open(img_path)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	defer imgFile.Close()
-	fInfo, _ := imgFile.Stat()
-	var size int64 = fInfo.Size()
-	buf := make([]byte, size)
-	fReader := bufio.NewReader(imgFile)
-	fReader.Read(buf)
-	imgBase64Str := base64.StdEncoding.EncodeToString(buf)
-
-	values := map[string]string{"image": imgBase64Str}
+	
+	values := map[string]string{"text": "FAILS"}
 	time.Sleep(10 * time.Millisecond)
 	start := time.Now()
 	for i := 0; i < len(arrival_curve); i++ {
@@ -64,7 +49,7 @@ func main() {
 		}
 		time.Sleep(time.Duration(time_ms) * time.Millisecond)
 		// values := map[string]string{"data": imgBase64Str}
-		go MakeRequest("http://127.0.0.1:8000/resnet50", values, ch, deadline_ms)
+		go MakeRequest("http://127.0.0.1:8001/bert", values, ch, deadline_ms)
 	}
 	for i := 0; i < len(arrival_curve); i++ {
 		<-ch

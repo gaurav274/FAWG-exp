@@ -7,7 +7,7 @@ import json
 
 @click.command()
 @click.option("--config-json", type=str, default="default.json")
-@click.option("--save-path", type=str, default="image_classification.xlsx")
+@click.option("--save-path", type=str, default="bert24.xlsx")
 def main(config_json, save_path):
     with open(config_json, "r") as fp:
         model_configs = json.load(fp)
@@ -37,16 +37,7 @@ def main(config_json, save_path):
             },
             ignore_index=True,
         )
-    # df = df.append(
-    #     {
-    #         "Model Name": "resnet34",
-    #         "Accuracy": 72.4,
-    #         "Dataset Information": json.dumps(IMAGE_DATASET_INFORMATION),
-    #         "feature": IMAGE_CLASSIFICATION_FEATURE,
-    #         "profile configuration": json.dumps(profile_config),
-    #     },
-    #     ignore_index=True,
-    # )
+
     with pd.ExcelWriter(save_path, mode="w") as writer:
         df.to_excel(writer, sheet_name="Model Information")
 

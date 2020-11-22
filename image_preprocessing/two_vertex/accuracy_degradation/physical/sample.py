@@ -38,8 +38,7 @@ class Stage0(torch.nn.Module):
         super(Stage0, self).__init__()
         self.embedding_layer = BertEmbeddings(config)
         self.layers = []
-        print(config.num_hidden_layers)
-        for i in range(config.num_hidden_layers // 2):
+        for i in range(config.num_hidden_layers // 24):
             self.layers.append(BertLayer(config))
         self.layers = torch.nn.ModuleList(self.layers)
         self.config = config
@@ -67,7 +66,7 @@ class Stage1(torch.nn.Module):
     def __init__(self, config):
         super(Stage1, self).__init__()
         self.layers = []
-        for i in range(config.num_hidden_layers // 6):
+        for i in range(12):#config.num_hidden_layers):
             self.layers.append(BertLayer(config))
         self.layers = torch.nn.ModuleList(self.layers)
         self.pooling_layer = BertPooler(config)
@@ -161,14 +160,14 @@ class BertFinalPartition:
         accept_batch=True,
     )
     def __call__(self, data: list) -> list:
+        print(data)
         input0 = torch.stack(data)
         if self.is_cuda:
             input0 = input0.cuda()
 
         outputs = self.model(input0)
         res = [i.cpu().unbind()[1] for i in outputs[1]]
-        return [1] * len(data)
-
+        return res
 
 def create_pgraph(model_name = 'gg'):
 
@@ -186,18 +185,18 @@ def create_pgraph(model_name = 'gg'):
         model_dummy_kwarg = {"data": [encoded]}
         model_dummy_kwarg_1 = {"data": [torch.rand(64, 1024)]}
 
-        prepoc = Tokenizer(
-            _name=f"tokenizer",
-            _dummy_kwargs=prepoc_dummy_kwarg,
-            tokenizer=tokenizer,
-        )
+        # prepoc = Tokenizer(
+        #     _name=f"tokenizer",
+        #     _dummy_kwargs=prepoc_dummy_kwarg,
+        #     tokenizer=tokenizer,
+        # )
 
-        model = BertPartition(
-            _name=f"bert24_p2_stage0",
-            _dummy_kwargs=model_dummy_kwarg,
-            model = Stage0(config),
-            is_cuda=True,
-        )
+        # model = BertPartition(
+        #     _name=f"bert24_p2_stage0",
+        #     _dummy_kwargs=model_dummy_kwarg,
+        #     model = Stage0(config),
+        #     is_cuda=True,
+        # )
 
         model_2 = BertFinalPartition(
             _name=f"bert24-p2-stage1",
@@ -207,9 +206,11 @@ def create_pgraph(model_name = 'gg'):
         )
 
         # connection
-        prepoc >> model >> model_2
+        # prepoc >> model_2
 
     return graph
+
+
 
 ray_serve_kwargs={
         "ray_init_kwargs": {
@@ -217,8 +218,8 @@ ray_serve_kwargs={
             "num_cpus": 24,
             "_internal_config": json.dumps(
                 {
-                    "max_direct_call_object_size": 10 * 1024 * 1024,  # 10Mb
-                    "max_grpc_message_size": 100 * 1024 * 1024,  # 100Mb
+                    "max_direct_call_object_size": 10000 * 1024 * 1024,  # 10Mb
+                    "max_grpc_message_size": 100000 * 1024 * 1024,  # 100Mb
                 }
             ),
             # "resources": resources,
@@ -226,75 +227,11 @@ ray_serve_kwargs={
         "start_server": False,
         }
 
-
-@click.command()
-@click.option("--xls-file", type=str, default="bert24.xlsx")
-@click.option("--start-cmd", type=str, default=None)
-@click.option("--end-cmd", type=str, default=None)
-def main(xls_file, start_cmd, end_cmd):
-    if start_cmd:
-        assert end_cmd is not None, "Wrong input"
-    if end_cmd:
-        assert start_cmd is not None, "Wrong input"
-
-    df = pd.read_excel(xls_file, sheet_name="Model Information")
-    clean_profile_df = pd.DataFrame()
-    raw_profile_df = pd.DataFrame(
-        columns=[
-            "pgraph",
-            "raw profile",
-            "Dataset Information",
-            "feature",
-            "Model Name",
-            "Accuracy",
-            "sysinfo",
-        ]
-    )
-    for index, row in df.iterrows():
-
-        if start_cmd:
-            os.system(start_cmd)
-
-        srtml.init(ray_serve_kwargs = ray_serve_kwargs)
-        pgraph = create_pgraph(df.loc[index, "Model Name"])
-        pgraph.configure(SERVE_MODE)
-        pgraph.provision(SERVE_MODE)
         
-        profile_dict = profile_pgraph(
-            pgraph, **json.loads(df.loc[index, "profile configuration"])
-        )
 
-        pprint(profile_dict)
-        clean_profile_df = pd.concat(
-            [
-                clean_profile_df,
-                get_dataframe_from_profile(pgraph.ppu_identifier, profile_dict),
-            ]
-        )
-        raw_profile_df = raw_profile_df.append(
-            {
-                "pgraph": pgraph.ppu_identifier,
-                "raw profile": json.dumps(profile_dict),
-                "Dataset Information": df.loc[index, "Dataset Information"],
-                "feature": df.loc[index, "feature"],
-                "Model Name": df.loc[index, "Model Name"],
-                "Accuracy": df.loc[index, "Accuracy"],
-                "sysinfo": get_sysinfo(),
-            },
-            ignore_index=True,
-        )
-
-        shutdown()
-        if end_cmd:
-            os.system(end_cmd)
-
-    with pd.ExcelWriter(xls_file, mode="a") as writer:
-        clean_profile_df.to_excel(writer, sheet_name="Model Profile")
-        raw_profile_df.to_excel(writer, sheet_name="Model Raw Profile")
-
-    # for index, row in df.iterrows():
-    #     pass
-
-
-if __name__ == "__main__":
-    main()
+srtml.init(ray_serve_kwargs = ray_serve_kwargs)
+graph = create_pgraph()
+graph.configure(SERVE_MODE)
+graph.provision(SERVE_MODE)
+s = {"warmup": 2, "num_requests": 5, "percentile": 99}
+pprint(profile_pgraph(graph, **s))

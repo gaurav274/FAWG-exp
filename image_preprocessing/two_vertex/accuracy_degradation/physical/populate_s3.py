@@ -12,7 +12,6 @@ from PIL import Image
 import base64
 import torch
 import torchvision.transforms as transforms
-from torchvision import models
 import io
 import os
 import srtml
@@ -27,111 +26,198 @@ import click
 import json
 from srtml.modellib import DATASET_INFORMATION
 
+from transformers import BertTokenizer, BertConfig
+# from bert24.p2.stage0 import Stage0
+from bert24.p2.stage1 import Stage1
+
+import torch
+from transformers.modeling_bert import BertLayer
+from transformers.modeling_bert import BertEmbeddings
+from torch.nn import LayerNorm as BertLayerNorm
+from transformers.modeling_bert import BertPooler
+from transformers.modeling_bert import BertPreTrainingHeads
+
+class Stage0(torch.nn.Module):
+    def __init__(self, config):
+        super(Stage0, self).__init__()
+        self.embedding_layer = BertEmbeddings(config)
+        self.layers = []
+        for i in range(config.num_hidden_layers // 24):
+            self.layers.append(BertLayer(config))
+        self.layers = torch.nn.ModuleList(self.layers)
+        self.config = config
+        self.apply(self.init_bert_weights)
+
+    def init_bert_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0,
+                                       std=self.config.initializer_range)
+        elif isinstance(module, BertLayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, torch.nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+    def forward(self, input0, input1):
+        out0 = input0
+        out1 = input1
+        out = self.embedding_layer(out0, out1)
+        for layer in self.layers:
+            out,  = layer(out)
+        return out
+
+class Stage1(torch.nn.Module):
+    def __init__(self, config):
+        super(Stage1, self).__init__()
+        self.layers = []
+        for i in range(config.num_hidden_layers // 2):
+            self.layers.append(BertLayer(config))
+        self.layers = torch.nn.ModuleList(self.layers)
+        self.pooling_layer = BertPooler(config)
+        self.pre_training_heads_layer = BertPreTrainingHeads(config)
+        self.config = config;
+        self.apply(self.init_bert_weights)
+
+    def init_bert_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0,
+                                       std=self.config.initializer_range)
+        elif isinstance(module, BertLayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, torch.nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+    def forward(self, input1, input0):
+        out0 = input0
+        out1 = input1
+        out = out0
+        for layer in self.layers:
+            out,  = layer(out, out1)
+        out2 = self.pooling_layer(out)
+        out3 = self.pre_training_heads_layer(out, out2)
+        return len(out3)
+
+config = BertConfig.from_pretrained('bert-large-uncased')
+models = {'bert24-p2-stage0': Stage0(config), 'bert24-p2-stage1': Stage1(config)}
 
 @ppu
-class Transform:
+class Tokenizer:
     """
     Standard pytorch pre-processing functionality
     - gets a raw image
     - converts it to tensor
     """
 
-    def __init__(self, transform: Any) -> None:
-
-        self.transform = transform
+    def __init__(self, tokenizer: Any) -> None:
+        self.tokenizer = tokenizer
 
     @ppu_type(
-        output_shape=(3, 224, 224),
         hardware_reqs="Hardware.CPU.CPU1",
         accept_batch=True,
     )
     def __call__(self, data: list) -> list:
         data_list = list()
-        for img in data:
-            data = Image.open(io.BytesIO(base64.b64decode(img)))
-            if data.mode != "RGB":
-                data = data.convert("RGB")
-            data = self.transform(data)
-            data_list.append(data)
+        for txt in data:
+            encoded = self.tokenizer(text=txt, add_special_tokens=True,  # Add [CLS] and [SEP]
+                                 max_length = 64,  # maximum length of a sentence
+                                 padding='max_length',  # Add [PAD]s
+                                 return_attention_mask = True,  # Generate the attention mask
+                                 return_tensors = 'pt')
+            data_list.append(encoded)
         return data_list
 
 
 @ppu
-class PredictModelPytorch:
-    """
-    Standard pytorch prediction functionality
-    - gets a preprocessed tensor
-    - predicts it's class
-    """
-
-    def __init__(self, model_name: str, is_cuda: bool = False) -> None:
-        self.model = models.__dict__[model_name](pretrained=True)
+class BertPartition:
+    def __init__(self, model: Any, is_cuda: bool = False) -> None:
+        self.model = model
         self.is_cuda = is_cuda
         if is_cuda:
             self.model = self.model.cuda()
 
     @ppu_type(
-        input_shape=(3, 224, 224),
         hardware_reqs="Hardware.GPU.Nvidia.Tesla_P40",
         accept_batch=True,
     )
     def __call__(self, data: list) -> list:
-        data = torch.stack(data)
-        data = Variable(data)
-        if self.is_cuda:
-            data = data.cuda()
-        outputs = self.model(data)
-        _, predicted = outputs.max(1)
-        return predicted.cpu().numpy().tolist()
+        input0 = torch.stack([item['input_ids'][0] for item in data])
+        input1 = torch.stack([item['attention_mask'][0] for item in data])
 
+        if self.is_cuda:
+            input0 = input0.cuda()
+            input1 = input1.cuda()
+        outputs = self.model(input0, input1)
+        res = [i.cpu().unbind() for i in outputs]
+        res = [[a, b] for a, b in zip(res[0], res[1])]
+
+        return res
+
+@ppu
+class BertFinalPartition:
+    def __init__(self, model: Any, is_cuda: bool = False) -> None:
+        self.model = model
+        self.is_cuda = is_cuda
+        if is_cuda:
+            self.model = self.model.cuda()
+
+    @ppu_type(
+        hardware_reqs="Hardware.GPU.Nvidia.Tesla_P40",
+        accept_batch=True,
+    )
+    def __call__(self, data: list) -> list:
+        input0 = torch.stack(data)
+        if self.is_cuda:
+            input0 = input0.cuda()
+
+        outputs = self.model(input0)
+        res = [i.cpu().unbind() for i in outputs]
+        return res
 
 def create_pgraph(model_name):
 
-    with PGraph(name=f"Classifier-{model_name}") as graph:
+    with PGraph(name=f"Sentimental-{model_name}") as graph:
 
-        min_img_size = 224
-        transform = transforms.Compose(
-            [
-                transforms.Resize(min_img_size),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225],
-                ),
-            ]
-        )
+        tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
+        txt = 'Debugging'
+        encoded = tokenizer(text=txt, add_special_tokens=True,  # Add [CLS] and [SEP]
+                                 max_length = 64,  # maximum length of a sentence
+                                 padding='max_length',  # Add [PAD]s
+                                 return_attention_mask = True,  # Generate the attention mask
+                                 return_tensors = 'pt')
 
-        img = base64.b64encode(
-            open(
-                os.path.join(IMAGE_CLASSIFICATION_DIR, "elephant.jpg"), "rb"
-            ).read()
-        )
+        prepoc_dummy_kwarg = {"data": [txt]}
+        model_dummy_kwarg = {"data": [encoded]}
 
-        prepoc_dummy_kwarg = {"data": [img]}
-
-        model_dummy_kwarg = {"data": [torch.zeros((3, 224, 224))]}
-
-        prepoc = Transform(
-            _name=f"prepoc-{model_name}",
+        prepoc = Tokenizer(
+            _name=f"tokenizer",
             _dummy_kwargs=prepoc_dummy_kwarg,
-            transform=transform,
+            tokenizer=tokenizer,
         )
 
-        model = PredictModelPytorch(
-            _name=f"model-{model_name}",
+        model = BertPartition(
+            _name=f"bert24_p2_stage0",
             _dummy_kwargs=model_dummy_kwarg,
-            model_name=model_name,
+            model = Stage0(config),
+            is_cuda=True,
+        )
+
+        model_2 = BertFinalPartition(
+            _name=f"bert24-p2-stage1",
+            _dummy_kwargs=model_dummy_kwarg,
+            model_name=Stage1(config),
             is_cuda=True,
         )
 
         # connection
-        prepoc >> model
+        prepoc >> model >> model_2
 
     return graph
 
 
+
 @click.command()
-@click.option("--xls-file", type=str, default="image_classification.xlsx")
+@click.option("--xls-file", type=str, default="bert24.xlsx")
 @click.option("--start-cmd", type=str, default=None)
 @click.option("--end-cmd", type=str, default=None)
 @click.option("--cleanmr", type=bool, default=True)
@@ -145,6 +231,21 @@ def main(xls_file, start_cmd, end_cmd, cleanmr):
 
     if start_cmd:
         os.system(start_cmd)
+    ray_serve_kwargs={
+        "ray_init_kwargs": {
+            "object_store_memory": int(5e10),
+            "num_cpus": 24,
+            "_internal_config": json.dumps(
+                {
+                    "max_direct_call_object_size": 1000 * 1024 * 1024,  # 10Mb
+                    "max_grpc_message_size": 10000 * 1024 * 1024,  # 100Mb
+                }
+            ),
+            # "resources": resources,
+        },
+        "start_server": False,
+        }
+
     srtml.init()
 
     df = pd.read_excel(xls_file, sheet_name="Model Raw Profile")

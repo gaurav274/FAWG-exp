@@ -4,7 +4,7 @@ import json
 import time
 import subprocess
 from srtml import VGraph, vpu, vpu_type
-from srtml.modellib import DATASET_INFORMATION, SERVE_MODE
+from srtml.modellib import DATASET_INFORMATION, SERVE_MODE, LOCAL_MODE
 from srtml_exp import (
     IMAGE_DATASET_INFORMATION,
     IMAGE_CLASSIFICATION_FEATURE,
@@ -28,7 +28,7 @@ from pprint import pprint
 @vpu
 @vpu_type(output_type=list)
 class Classifier:
-    image: list
+    text: list
 
 
 dinfo = DATASET_INFORMATION(**IMAGE_DATASET_INFORMATION)
@@ -67,9 +67,24 @@ def main(xls_file, start_cmd, end_cmd):
 
         if start_cmd:
             os.system(start_cmd)
-        srtml.init(start_server=False)
+        ray_serve_kwargs={
+        "ray_init_kwargs": {
+            "object_store_memory": int(5e10),
+            "num_cpus": 24,
+            "_internal_config": json.dumps(
+                {
+                    "max_direct_call_object_size": 10 * 1024 * 1024,  # 10Mb
+                    "max_grpc_message_size": 100 * 1024 * 1024,  # 100Mb
+                }
+            ),
+            # "resources": resources,
+        },
+        "start_server": False,
+        }
 
-        with VGraph(name="classifier") as graph:
+        srtml.init(ray_serve_kwargs = ray_serve_kwargs)
+
+        with VGraph(name="bert") as graph:
             classifier = Classifier(
                 feature=IMAGE_CLASSIFICATION_FEATURE,
                 dataset_information=dinfo,
@@ -77,6 +92,8 @@ def main(xls_file, start_cmd, end_cmd):
             )
 
         pgraph_metadata = json.loads(df.loc[index, "configuration"])
+        pgraph_metadata['bert/VClassifier']['ppu_state']['Sentimental-bert24-2/bert24_p2_stage0']['resources']['Tesla P40'] = 0.2
+        pgraph_metadata['bert/VClassifier']['ppu_state']['Sentimental-bert24-2/bert24_p2_stage0']['num_gpus'] = 0.2
         graph.materialize(pgraph_metadata=pgraph_metadata)
 
         arrival_curve = generate_fixed_arrival_process(
@@ -84,19 +101,18 @@ def main(xls_file, start_cmd, end_cmd):
             cv=df.loc[index, columns[1]],
             num_requests=df.loc[index, columns[2]],
         ).tolist()
-
         graph.provision(SERVE_MODE)
-        img_path = os.path.join(IMAGE_CLASSIFICATION_DIR, "elephant.jpg")
-        data = base64.b64encode(open(img_path, "rb").read())
-
+        # img_path = os.path.join(IMAGE_CLASSIFICATION_DIR, "elephant.jpg")
+        # data = base64.b64encode(open(img_path, "rb").read())
+        data = 'I am hot and sexy'
         # Warm-up and throughput calculation
-        WARMUP = 200
-        NUM_REQUESTS = 1000
+        WARMUP = 2
+        NUM_REQUESTS = 10
         vpu = graph.handle
-        futures = [vpu.remote(image=data) for _ in range(WARMUP)]
+        futures = [vpu.remote(text=data) for _ in range(WARMUP)]
         ray.get(futures)
         start_time = time.time()
-        futures = [vpu.remote(image=data) for _ in range(NUM_REQUESTS)]
+        futures = [vpu.remote(text=data) for _ in range(NUM_REQUESTS)]
         ray.wait(futures, num_returns=len(futures))
         end_time = time.time()
         time_taken = end_time - start_time
@@ -104,9 +120,10 @@ def main(xls_file, start_cmd, end_cmd):
 
         row_df[columns[9]] = throughput_qps
 
+        print('#######################################')
         # latency calculation
-        http_actor = HTTPProxyActor.remote(host="127.0.0.1", port=8000)
-        ray.get(http_actor.register_route.remote("/resnet50", vpu))
+        http_actor = HTTPProxyActor.remote(host="127.0.0.1", port=8001)
+        ray.get(http_actor.register_route.remote("/bert", vpu))
         ray.get(http_actor.init_latency.remote())
 
         client_path = os.path.join(
@@ -122,7 +139,7 @@ def main(xls_file, start_cmd, end_cmd):
                 "run",
                 client_path,
                 str(df.loc[index, columns[3]]),
-                img_path,
+                'lol',
                 *[str(val) for val in arrival_curve],
             ]
         )

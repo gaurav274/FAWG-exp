@@ -1,10 +1,6 @@
 [
     {
-        "Model Name": "resnet50",
-        "Accuracy": 75.8
-    },
-    {
-        "Model Name": "resnet34",
-        "Accuracy": 75.8
+        "Model Name": "bert24-2",
+        "Accuracy": 93.0
     }
 ]

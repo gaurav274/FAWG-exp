@@ -67,7 +67,7 @@ class Stage1(torch.nn.Module):
     def __init__(self, config):
         super(Stage1, self).__init__()
         self.layers = []
-        for i in range(config.num_hidden_layers // 6):
+        for i in range(config.num_hidden_layers // 2):
             self.layers.append(BertLayer(config))
         self.layers = torch.nn.ModuleList(self.layers)
         self.pooling_layer = BertPooler(config)
@@ -97,6 +97,8 @@ class Stage1(torch.nn.Module):
 
 config = BertConfig.from_pretrained('bert-large-uncased')
 
+# PPUs START
+#####################################################################################################
 @ppu
 class Tokenizer:
     """
@@ -169,6 +171,8 @@ class BertFinalPartition:
         res = [i.cpu().unbind()[1] for i in outputs[1]]
         return [1] * len(data)
 
+# PPUs END
+#####################################################################################################
 
 def create_pgraph(model_name = 'gg'):
 

@@ -92,8 +92,8 @@ def main(xls_file, start_cmd, end_cmd):
             )
 
         pgraph_metadata = json.loads(df.loc[index, "configuration"])
-        pgraph_metadata['bert/VClassifier']['ppu_state']['Sentimental-bert24-2/bert24_p2_stage0']['resources']['Tesla P40'] = 0.2
-        pgraph_metadata['bert/VClassifier']['ppu_state']['Sentimental-bert24-2/bert24_p2_stage0']['num_gpus'] = 0.2
+        # pgraph_metadata['bert/VClassifier']['ppu_state']['Sentimental-bert24-2/bert24_p2_stage0']['resources']['Tesla P40'] = 0.2
+        # pgraph_metadata['bert/VClassifier']['ppu_state']['Sentimental-bert24-2/bert24_p2_stage0']['num_gpus'] = 0.2
         graph.materialize(pgraph_metadata=pgraph_metadata)
 
         arrival_curve = generate_fixed_arrival_process(

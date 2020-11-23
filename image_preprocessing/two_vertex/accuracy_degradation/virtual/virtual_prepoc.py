@@ -154,7 +154,14 @@ def main(xls_file, start_cmd, end_cmd):
         row_df[columns[11]] = p99_ms
 
         raw_row_df["Latency (ms)"] = latency_ms
-
+        #print(latency_list)
+        elapsed_latency_list = [latency_dict["end"] - latency_dict["start"] for latency_dict in latency_list]
+        elapsed_latency_list.sort()
+        f = open("latencies.txt", "w")
+        for entry in elapsed_latency_list:
+            f.write(str(entry))
+            f.write("\n")
+        f.close()
         shutdown()
         if end_cmd:
             os.system(end_cmd)

@@ -104,10 +104,10 @@ def main(xls_file, start_cmd, end_cmd):
         graph.provision(SERVE_MODE)
         # img_path = os.path.join(IMAGE_CLASSIFICATION_DIR, "elephant.jpg")
         # data = base64.b64encode(open(img_path, "rb").read())
-        data = 'I am hot and sexy'
+        data = 'Sample string'
         # Warm-up and throughput calculation
-        WARMUP = 2
-        NUM_REQUESTS = 10
+        WARMUP = 200
+        NUM_REQUESTS = 1000
         vpu = graph.handle
         futures = [vpu.remote(text=data) for _ in range(WARMUP)]
         ray.get(futures)

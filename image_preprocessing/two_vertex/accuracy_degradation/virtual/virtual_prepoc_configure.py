@@ -94,6 +94,10 @@ def main(xls_file, start_cmd, end_cmd):
 
         new_df = new_df.append(row_df, ignore_index=True)
 
+        file_path = "/nethome/gkakkar7/srtml-experiments/experimental_results/qps_latency_tradeoff/125q_200l_p2/config.txt"
+        with open(file_path, 'w') as file:
+            file.write(json.dumps(config))
+
     shutdown()
     if end_cmd:
         os.system(end_cmd)

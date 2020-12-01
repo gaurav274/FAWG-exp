@@ -26,32 +26,6 @@ import click
 import json
 from srtml.modellib import DATASET_INFORMATION
 
-from transformers import BertTokenizer, BertConfig
-# from bert24.p2.stage0 import Stage0
-from bert24.p2.stage1 import Stage1
-
-import torch
-from transformers.modeling_bert import BertLayer
-from transformers.modeling_bert import BertEmbeddings
-from torch.nn import LayerNorm as BertLayerNorm
-from transformers.modeling_bert import BertPooler
-from transformers.modeling_bert import BertPreTrainingHeads
-
-ray_serve_kwargs={
-        "ray_init_kwargs": {
-            "object_store_memory": int(5e10),
-            "num_cpus": 24,
-            "_internal_config": json.dumps(
-                {
-                    "max_direct_call_object_size": 10 * 1024 * 1024,  # 10Mb
-                    "max_grpc_message_size": 100 * 1024 * 1024,  # 100Mb
-                }
-            ),
-            # "resources": resources,
-        },
-        "start_server": False,
-        }
-
 ###################################################################################################
 
 from transformers import BertTokenizer, BertConfig
@@ -59,18 +33,16 @@ import torch
 from transformers.modeling_bert import BertLayer, BertEmbeddings, BertPooler, BertPreTrainingHeads
 from torch.nn import LayerNorm as BertLayerNorm
 
-class Bert(torch.nn.Module):
+class Stage0(torch.nn.Module):
     def __init__(self, config):
-        super(Bert, self).__init__()
+        super(Stage0, self).__init__()
         self.embedding_layer = BertEmbeddings(config)
         self.layers = []
-        for i in range(config.num_hidden_layers-10):
+        print(config.num_hidden_layers)
+        for i in range(config.num_hidden_layers // 8):
             self.layers.append(BertLayer(config))
-
         self.layers = torch.nn.ModuleList(self.layers)
-        self.pooling_layer = BertPooler(config)
-        self.pre_training_heads_layer = BertPreTrainingHeads(config)
-        self.config = config;
+        self.config = config
         self.apply(self.init_bert_weights)
 
     def init_bert_weights(self, module):
@@ -89,10 +61,90 @@ class Bert(torch.nn.Module):
         out = self.embedding_layer(out0, out1)
         for layer in self.layers:
             out,  = layer(out)
+        return out
+
+class Stage1(torch.nn.Module):
+    def __init__(self, config):
+        super(Stage1, self).__init__()
+        self.layers = []
+        for i in range(config.num_hidden_layers // 8):
+            self.layers.append(BertLayer(config))
+        self.layers = torch.nn.ModuleList(self.layers)
+        self.config = config;
+        self.apply(self.init_bert_weights)
+
+    def init_bert_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0,
+                                       std=self.config.initializer_range)
+        elif isinstance(module, BertLayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, torch.nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+    def forward(self, input0):
+        out = input0
+        for layer in self.layers:
+            out,  = layer(out)
+        return out
+
+
+class Stage2(torch.nn.Module):
+    def __init__(self, config):
+        super(Stage2, self).__init__()
+        self.layers = []
+        for i in range(config.num_hidden_layers // 8):
+            self.layers.append(BertLayer(config))
+        self.layers = torch.nn.ModuleList(self.layers)
+        self.config = config;
+        self.apply(self.init_bert_weights)
+
+    def init_bert_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0,
+                                       std=self.config.initializer_range)
+        elif isinstance(module, BertLayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, torch.nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+    def forward(self, input0):
+        out = input0
+        for layer in self.layers:
+            out,  = layer(out)
+        return out
+
+class Stage3(torch.nn.Module):
+    def __init__(self, config):
+        super(Stage3, self).__init__()
+        self.layers = []
+        for i in range(config.num_hidden_layers // 8):
+            self.layers.append(BertLayer(config))
+        self.layers = torch.nn.ModuleList(self.layers)
+        self.pooling_layer = BertPooler(config)
+        self.pre_training_heads_layer = BertPreTrainingHeads(config)
+        self.config = config;
+        self.apply(self.init_bert_weights)
+
+    def init_bert_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0,
+                                       std=self.config.initializer_range)
+        elif isinstance(module, BertLayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, torch.nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+    def forward(self, input0):
+        out = input0
+        for layer in self.layers:
+            out,  = layer(out)
         out2 = self.pooling_layer(out)
         out3 = self.pre_training_heads_layer(out, out2)
         return out3
-
 
 ##################################################################################################
 
@@ -126,8 +178,9 @@ class Tokenizer:
             data_list.append(encoded)
         return data_list
 
+
 @ppu
-class BertOriginal:
+class BertPartition:
     def __init__(self, model: Any, is_cuda: bool = False) -> None:
         self.model = model
         self.is_cuda = is_cuda
@@ -146,13 +199,52 @@ class BertOriginal:
             input0 = input0.cuda()
             input1 = input1.cuda()
         outputs = self.model(input0, input1)
-        res = [i.cpu().unbind()[1] for i in outputs[1]]
-        return [1] * len(res)
+        res = list(outputs.cpu().unbind())
+        # res = [[a, b] for a, b in zip(res[0], res[1])]
+        return res
 
+@ppu
+class BertIntermediate:
+    def __init__(self, model: Any, is_cuda: bool = False) -> None:
+        self.model = model
+        self.is_cuda = is_cuda
+        if is_cuda:
+            self.model = self.model.cuda()
+
+    @ppu_type(
+        hardware_reqs="Hardware.GPU.Nvidia.Tesla_P40",
+        accept_batch=True,
+    )
+    def __call__(self, data: list) -> list:
+        input0 = torch.stack(data)
+        if self.is_cuda:
+            input0 = input0.cuda()
+        outputs = self.model(input0)
+        res = list(outputs.cpu().unbind())
+        return res
+        
+@ppu
+class BertFinalPartition:
+    def __init__(self, model: Any, is_cuda: bool = False) -> None:
+        self.model = model
+        self.is_cuda = is_cuda
+        if is_cuda:
+            self.model = self.model.cuda()
+
+    @ppu_type(
+        hardware_reqs="Hardware.GPU.Nvidia.Tesla_P40",
+        accept_batch=True,
+    )
+    def __call__(self, data: list) -> list:
+        input0 = torch.stack(data)
+        if self.is_cuda:
+            input0 = input0.cuda()
+        outputs = self.model(input0)
+        res = [i.cpu().unbind()[1] for i in outputs[1]]
+        return [1] * len(data)
 
 # PPUs END
 #####################################################################################################
-
 
 def create_pgraph(model_name = 'gg'):
 
@@ -169,6 +261,8 @@ def create_pgraph(model_name = 'gg'):
         prepoc_dummy_kwarg = {"data": [txt]}
         model_dummy_kwarg = {"data": [encoded]}
         model_dummy_kwarg_1 = {"data": [torch.rand(64, 1024)]}
+        model_dummy_kwarg_2 = {"data": [torch.rand(64, 1024)]}
+        model_dummy_kwarg_3 = {"data": [torch.rand(64, 1024)]}
 
         prepoc = Tokenizer(
             _name=f"tokenizer",
@@ -176,15 +270,55 @@ def create_pgraph(model_name = 'gg'):
             tokenizer=tokenizer,
         )
 
-        model = BertOriginal(
-            _name=f"bert",
+        model = BertPartition(
+            _name=f"bert24_p2_stage0",
             _dummy_kwargs=model_dummy_kwarg,
-            model = Bert(config),
+            model = Stage0(config),
             is_cuda=True,
         )
 
-        prepoc >> model
+        model_2 = BertIntermediate(
+            _name=f"bert24-p2-stage1",
+            _dummy_kwargs=model_dummy_kwarg_1,
+            model=Stage1(config),
+            is_cuda=True,
+        )
+
+        model_3 = BertIntermediate(
+            _name=f"bert24-p2-stage2",
+            _dummy_kwargs=model_dummy_kwarg_1,
+            model=Stage2(config),
+            is_cuda=True,
+        )
+
+        model_4 = BertFinalPartition(
+            _name=f"bert24-p2-stage3",
+            _dummy_kwargs=model_dummy_kwarg_1,
+            model=Stage3(config),
+            is_cuda=True,
+        )
+
+        # connection
+        prepoc >> model >> model_2 >> model_3 >> model_4
+
     return graph
+
+
+ray_serve_kwargs={
+        "ray_init_kwargs": {
+            "object_store_memory": int(10e10),
+            "num_cpus": 24,
+            "_internal_config": json.dumps(
+                {
+                    "max_direct_call_object_size": 10 * 1024 * 1024,  # 10Mb
+                    "max_grpc_message_size": 100 * 1024 * 1024,  # 100Mb
+                }
+            ),
+            # "resources": resources,
+        },
+        "start_server": False,
+        }
+
 
 
 
@@ -203,8 +337,22 @@ def main(xls_file, start_cmd, end_cmd, cleanmr):
 
     if start_cmd:
         os.system(start_cmd)
+    ray_serve_kwargs={
+        "ray_init_kwargs": {
+            "object_store_memory": int(5e10),
+            "num_cpus": 24,
+            "_internal_config": json.dumps(
+                {
+                    "max_direct_call_object_size": 1000 * 1024 * 1024,  # 10Mb
+                    "max_grpc_message_size": 10000 * 1024 * 1024,  # 100Mb
+                }
+            ),
+            # "resources": resources,
+        },
+        "start_server": False,
+        }
 
-    srtml.init(ray_serve_kwargs = ray_serve_kwargs)
+    srtml.init()
 
     df = pd.read_excel(xls_file, sheet_name="Model Raw Profile")
 

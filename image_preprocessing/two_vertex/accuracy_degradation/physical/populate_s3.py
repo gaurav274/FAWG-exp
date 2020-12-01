@@ -64,7 +64,7 @@ class Bert(torch.nn.Module):
         super(Bert, self).__init__()
         self.embedding_layer = BertEmbeddings(config)
         self.layers = []
-        for i in range(config.num_hidden_layers-10):
+        for i in range(config.num_hidden_layers-12):
             self.layers.append(BertLayer(config))
 
         self.layers = torch.nn.ModuleList(self.layers)

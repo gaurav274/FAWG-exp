@@ -89,10 +89,9 @@ class Bert(torch.nn.Module):
         out = self.embedding_layer(out0, out1)
         for layer in self.layers:
             out,  = layer(out)
-        out2 = self.pooling_layer(out)
-        out3 = self.pre_training_heads_layer(out, out2)
-        return out3
-
+        # out2 = self.pooling_layer(out)
+        # out3 = self.pre_training_heads_layer(out, out2)
+        return out
 
 ##################################################################################################
 
@@ -146,8 +145,8 @@ class BertOriginal:
             input0 = input0.cuda()
             input1 = input1.cuda()
         outputs = self.model(input0, input1)
-        res = [i.cpu().unbind()[1] for i in outputs[1]]
-        return [1] * len(res)
+        res = list(outputs.cpu().unbind())
+        return res
 
 
 # PPUs END
@@ -170,11 +169,11 @@ def create_pgraph(model_name = 'gg'):
         model_dummy_kwarg = {"data": [encoded]}
         model_dummy_kwarg_1 = {"data": [torch.rand(64, 1024)]}
 
-        prepoc = Tokenizer(
-            _name=f"tokenizer",
-            _dummy_kwargs=prepoc_dummy_kwarg,
-            tokenizer=tokenizer,
-        )
+        # prepoc = Tokenizer(
+        #     _name=f"tokenizer",
+        #     _dummy_kwargs=prepoc_dummy_kwarg,
+        #     tokenizer=tokenizer,
+        # )
 
         model = BertOriginal(
             _name=f"bert",
@@ -183,7 +182,7 @@ def create_pgraph(model_name = 'gg'):
             is_cuda=True,
         )
 
-        prepoc >> model
+        model
     return graph
 
 

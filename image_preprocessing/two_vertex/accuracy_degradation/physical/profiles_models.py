@@ -14,6 +14,7 @@ import base64
 import torch
 import torchvision.transforms as transforms
 import io
+import time
 import os
 import srtml
 from srtml.modellib import ppu, ppu_type, PGraph, SERVE_MODE
@@ -63,10 +64,9 @@ class Bert(torch.nn.Module):
         out = self.embedding_layer(out0, out1)
         for layer in self.layers:
             out,  = layer(out)
-        out2 = self.pooling_layer(out)
-        out3 = self.pre_training_heads_layer(out, out2)
-        return out3
-
+        # out2 = self.pooling_layer(out)
+        # out3 = self.pre_training_heads_layer(out, out2)
+        return out
 
 ##################################################################################################
 
@@ -120,8 +120,8 @@ class BertOriginal:
             input0 = input0.cuda()
             input1 = input1.cuda()
         outputs = self.model(input0, input1)
-        res = [i.cpu().unbind()[1] for i in outputs[1]]
-        return [1] * len(res)
+        res = list(outputs.cpu().unbind())
+        return res
 
 
 # PPUs END
@@ -144,11 +144,11 @@ def create_pgraph(model_name = 'gg'):
         model_dummy_kwarg = {"data": [encoded]}
         model_dummy_kwarg_1 = {"data": [torch.rand(64, 1024)]}
 
-        prepoc = Tokenizer(
-            _name=f"tokenizer",
-            _dummy_kwargs=prepoc_dummy_kwarg,
-            tokenizer=tokenizer,
-        )
+        # prepoc = Tokenizer(
+        #     _name=f"tokenizer",
+        #     _dummy_kwargs=prepoc_dummy_kwarg,
+        #     tokenizer=tokenizer,
+        # )
 
         model = BertOriginal(
             _name=f"bert",
@@ -157,7 +157,7 @@ def create_pgraph(model_name = 'gg'):
             is_cuda=True,
         )
 
-        prepoc >> model
+        model
     return graph
 
 
@@ -210,10 +210,39 @@ def main(xls_file, start_cmd, end_cmd):
         pgraph.configure(SERVE_MODE)
         pgraph.provision(SERVE_MODE)
         print('done')
+        physical_vertex = list(pgraph.configurable_nodes.items())[0][1]
+        ppu_handle = physical_vertex.handle
+        print(ppu_handle)
+        hardware = physical_vertex.compatible_hardwares[0]
+        print(hardware)
+        print(df.loc[index, "profile configuration"])
         profile_dict = profile_pgraph(
             pgraph, **json.loads(df.loc[index, "profile configuration"])
         )
+        tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
+        txt = 'Debugging'
+        encoded = tokenizer(text=txt, add_special_tokens=True,  # Add [CLS] and [SEP]
+                                 max_length = 64,  # maximum length of a sentence
+                                 padding='max_length',  # Add [PAD]s
+                                 return_attention_mask = True,  # Generate the attention mask
+                                 return_tensors = 'pt')
 
+        backend_config = ppu_handle.get_backend_config()
+        backend_config.num_replicas = 1
+        backend_config.num_gpus = 1
+        backend_config.resources = {hardware: 1}
+        backend_config.max_batch_size = 1
+        ppu_handle.set_backend_config(backend_config)
+        latency_list_ms = []
+        for _ in range(10):
+            start_time = time.time()
+            # x = ray.wait([ppu_handle.enqueue_batch(data=[encoded])], num_returns=1)
+            x = ray.get([ppu_handle.enqueue_batch(data=[encoded])])
+            print(x)
+            end_time = time.time()
+            time_taken_ms = (end_time - start_time) * 1000
+            latency_list_ms.append(time_taken_ms)
+        pprint(latency_list_ms)
         pprint(profile_dict)
         clean_profile_df = pd.concat(
             [
